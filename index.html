@@ -9,36 +9,28 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        .win-border { border: 1px solid #999; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .win-shadow { box-shadow: inset 1px 1px #fff, 1px 1px #888; border: 1px solid #444; }
+        .win-input { border: 1px solid #7a7a7a; box-shadow: inset 1px 1px 2px #ddd; }
+        .win-btn { background: linear-gradient(#eee, #ccc); border: 1px solid #707070; transition: 0.1s; }
+        .win-btn:active { background: linear-gradient(#ccc, #eee); box-shadow: inset 1px 1px 2px #888; }
     </style>
 </head>
-<body class="bg-[#f0f0f0] text-[13px]">
+<body class="bg-[#f0f0f0] text-[13px] text-[#222]">
     <div id="root"></div>
 
     <script type="text/babel">
-        // LƯU Ý: Phải là link kết thúc bằng /exec từ Google Apps Script
+        // LƯU Ý: THAY ĐỔI LINK DƯỚI ĐÂY BẰNG LINK WEB APP GOOGLE CỦA BẠN
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwQPLxLHHZ_Y8DA2T2HwOWHhu4V1kxLJDBKA5A90gk7ux6BPCeglrnVpck6I_GqjXa99w/exec";
 
         const { useState, useEffect, useRef } = React;
 
-        function generateUUID() {
-            return 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-                const r = Math.random() * 16 | 0;
-                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-        }
-
-        const countWords = (str) => str.trim().split(/\s+/).filter(w => w.length > 0).length;
-
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
             const [authMode, setAuthMode] = useState('login');
-            const [user, setUser] = useState({ name: '', role: '' });
             const [authForm, setAuthForm] = useState({ username: '', password: '' });
-            const [showPassword, setShowPassword] = useState(false);
-            const [authStatus, setAuthStatus] = useState({ msg: '', type: '' });
+            const [showPass, setShowPass] = useState(false);
+            const [authMsg, setAuthMsg] = useState({ t: '', m: '' });
             const [loading, setLoading] = useState(false);
 
             const [activeTab, setActiveTab] = useState('text');
@@ -53,9 +45,7 @@
             const [progress, setProgress] = useState(0);
             const [isProcessing, setIsProcessing] = useState(false);
 
-            useEffect(() => {
-                if (isAuthenticated) fetchVoices();
-            }, [isAuthenticated]);
+            useEffect(() => { if (isAuthenticated) fetchVoices(); }, [isAuthenticated]);
 
             const fetchVoices = async () => {
                 try {
@@ -70,121 +60,86 @@
                     setVoices(grouped);
                     const vi = Object.keys(grouped).find(k => k.includes('Việt'));
                     if (vi) setConfig(prev => ({ ...prev, lang: vi, voice: grouped[vi][0].id }));
-                } catch (e) { setStatus('Lỗi tải giọng đọc.'); }
+                } catch (e) { setStatus('Lỗi tải danh sách giọng.'); }
             };
 
             const handleAuth = async (e) => {
                 e.preventDefault();
-                setLoading(true); setAuthStatus({ msg: 'Đang xác thực...', type: 'info' });
-                
+                setLoading(true); setAuthMsg({ t: 'info', m: 'Đang kiểm tra thông tin...' });
                 try {
-                    const cleanUser = authForm.username.trim();
-                    const cleanPass = authForm.password.trim();
-                    const url = `${GOOGLE_SCRIPT_URL}?action=${authMode}&username=${encodeURIComponent(cleanUser)}&password=${encodeURIComponent(cleanPass)}`;
-                    
-                    const res = await fetch(url);
+                    const res = await fetch(`${GOOGLE_SCRIPT_URL}?action=${authMode}&username=${encodeURIComponent(authForm.username)}&password=${encodeURIComponent(authForm.password)}`);
                     const data = await res.json();
-                    
                     if (data.success) {
-                        if (authMode === 'login') {
-                            setIsAuthenticated(true);
-                            setUser({ name: cleanUser, role: data.role });
-                            setAuthStatus({ msg: '', type: '' });
-                        } else {
-                            setAuthStatus({ msg: data.message, type: 'success' });
-                            setAuthMode('login');
-                        }
-                    } else {
-                        setAuthStatus({ msg: data.message, type: 'error' });
-                    }
-                } catch (err) {
-                    setAuthStatus({ msg: 'Lỗi kết nối máy chủ. Hãy kiểm tra link script!', type: 'error' });
-                } finally {
-                    setLoading(false);
-                }
+                        if (authMode === 'login') { setIsAuthenticated(true); } 
+                        else { setAuthMsg({ t: 'success', m: data.message }); setAuthMode('login'); }
+                    } else { setAuthMsg({ t: 'error', m: data.m || data.message }); }
+                } catch (e) { setAuthMsg({ t: 'error', m: 'Lỗi máy chủ. Kiểm tra lại link script!' }); }
+                finally { setLoading(false); }
             };
 
             const synthesize = (chunk) => {
                 return new Promise((resolve, reject) => {
-                    const connId = generateUUID();
+                    const connId = 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, (c) => (c==='x'?Math.random()*16|0:(Math.random()*16|0&0x3|0x8)).toString(16));
                     const ws = new WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&ConnectionId=${connId}&Sec-MS-GEC-Version=1-130.0.2849.68`);
                     let audioData = [];
-                    let marks = [];
-                    const timer = setTimeout(() => { ws.close(); reject(new Error("Timeout máy chủ.")); }, 30000);
-
+                    const timer = setTimeout(() => { ws.close(); reject(new Error("Timeout Azure")); }, 30000);
                     ws.onopen = () => {
                         const ts = new Date().toString();
-                        ws.send(`X-Timestamp:${ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"true","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`);
+                        ws.send(`X-Timestamp:${ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`);
                         const r = Math.round((config.rate - 1) * 100);
-                        const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'><voice name='${config.voice}'><prosody pitch='${config.pitch}Hz' rate='${r >= 0 ? '+' : ''}${r}%' volume='${config.vol - 100}%'>${chunk.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</prosody></voice></speak>`;
-                        ws.send(`X-RequestId:${generateUUID()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${ts}\r\nPath:ssml\r\n\r\n${ssml}`);
+                        const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'><voice name='${config.voice}'><prosody pitch='${config.pitch}Hz' rate='${r>=0?'+':''}${r}%' volume='${config.vol-100}%'>${chunk.replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</prosody></voice></speak>`;
+                        ws.send(`X-RequestId:${connId}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${ts}\r\nPath:ssml\r\n\r\n${ssml}`);
                     };
-
                     ws.onmessage = async (e) => {
-                        if (typeof e.data === 'string') {
-                            if (e.data.includes("Path:turn.end")) { clearTimeout(timer); ws.close(); resolve({ blob: new Blob(audioData, {type:'audio/mp3'}), marks }); }
-                        } else {
-                            const buf = await e.data.arrayBuffer();
-                            const view = new DataView(buf);
-                            const headLen = view.getUint16(0);
-                            audioData.push(buf.slice(2 + headLen));
-                        }
+                        if (typeof e.data === 'string' && e.data.includes("Path:turn.end")) { clearTimeout(timer); ws.close(); resolve(new Blob(audioData, {type:'audio/mp3'})); }
+                        else if (e.data instanceof Blob) { const b = await e.data.arrayBuffer(); audioData.push(b.slice(2 + new DataView(b).getUint16(0))); }
                     };
-                    ws.onerror = () => { clearTimeout(timer); reject(new Error("Lỗi mạng/WebSocket.")); };
+                    ws.onerror = () => reject(new Error("Lỗi mạng/WebSocket"));
                 });
             };
 
+            const processAll = async () => {
+                setIsProcessing(true); setProgress(0); setStatus('Đang bắt đầu...');
+                try {
+                    const run = async (c, n) => {
+                        const blob = await synthesize(c);
+                        if (dirHandle) { const h = await dirHandle.getFileHandle(`${n}.mp3`, {create:true}); const w = await h.createWritable(); await w.write(blob); await w.close(); }
+                        else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${n}.mp3`; a.click(); }
+                    };
+                    if (activeTab === 'text') { await run(text, outputName || `Audio_${Date.now()}`); setProgress(100); }
+                    else { 
+                        for(let i=0; i<files.length; i++) { 
+                            setStatus(`Đang đọc file: ${files[i].name}`);
+                            await run(await files[i].text(), files[i].name.replace('.txt',''));
+                            setProgress(Math.round(((i+1)/files.length)*100));
+                        }
+                    }
+                    setStatus('Hoàn tất!');
+                } catch(e) { setStatus(`Lỗi: ${e.message}`); } finally { setIsProcessing(false); }
+            };
+
             if (!isAuthenticated) return (
-                <div className="min-h-screen flex items-center justify-center bg-[#f5f5f5]">
-                    <div className="bg-white p-8 win-border w-full max-w-[400px]">
+                <div className="min-h-screen flex items-center justify-center p-6 bg-[#f0f0f0]">
+                    <div className="bg-white p-8 win-shadow w-full max-w-[400px]">
                         <h2 className="text-center text-2xl font-bold text-blue-700 mb-6 underline">Edge TTS Studio</h2>
-                        <div className="flex mb-6 bg-gray-100 p-1 rounded">
-                            <button onClick={() => setAuthMode('login')} className={`flex-1 py-2 text-sm font-bold ${authMode === 'login' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>Đăng nhập</button>
-                            <button onClick={() => setAuthMode('register')} className={`flex-1 py-2 text-sm font-bold ${authMode === 'register' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>Đăng ký</button>
+                        <div className="flex border-b mb-6 bg-gray-100 p-1">
+                            <button onClick={() => setAuthMode('login')} className={`flex-1 py-2 font-bold ${authMode === 'login' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>Đăng nhập</button>
+                            <button onClick={() => setAuthMode('register')} className={`flex-1 py-2 font-bold ${authMode === 'register' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>Đăng ký</button>
                         </div>
                         <form onSubmit={handleAuth} className="space-y-4">
+                            <div><label className="block font-bold mb-1">Tài khoản:</label><input type="text" className="w-full win-input p-2 outline-none" value={authForm.username} onChange={e => setAuthForm({...authForm, username: e.target.value})} required /></div>
                             <div>
-                                <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Tài khoản:</label>
-                                <input 
-                                    type="text" 
-                                    className="w-full border p-2 outline-none focus:border-blue-500 rounded" 
-                                    value={authForm.username} 
-                                    onChange={e => setAuthForm({...authForm, username: e.target.value})} 
-                                    placeholder="Nhập tài khoản"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Mật khẩu:</label>
+                                <label className="block font-bold mb-1">Mật khẩu:</label>
                                 <div className="relative">
-                                    <input 
-                                        type={showPassword ? "text" : "password"} 
-                                        className="w-full border p-2 outline-none focus:border-blue-500 rounded pr-12" 
-                                        value={authForm.password} 
-                                        onChange={e => setAuthForm({...authForm, password: e.target.value})} 
-                                        placeholder="Nhập mật khẩu"
-                                    />
-                                    <button 
-                                        type="button"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute right-2 top-2 text-[11px] font-bold text-blue-600 hover:text-blue-800"
-                                    >
-                                        {showPassword ? "ẨN" : "XEM"}
-                                    </button>
+                                    <input type={showPass ? "text" : "password"} className="w-full win-input p-2 outline-none pr-12" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
+                                    <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-2 top-2 text-[10px] bg-gray-200 border px-2 py-1 font-bold">{showPass ? "ẨN" : "XEM"}</button>
                                 </div>
                             </div>
-                            {authStatus.msg && (
-                                <div className={`p-3 text-xs border rounded flex flex-col gap-1 ${authStatus.type === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
-                                    <span className="font-bold uppercase">{authStatus.type === 'error' ? 'Lỗi:' : 'Thông báo:'}</span>
-                                    <span>{authStatus.msg}</span>
-                                </div>
-                            )}
-                            <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 font-bold hover:bg-blue-700 disabled:bg-gray-400 rounded shadow-md transition-all uppercase tracking-wider">
-                                {loading ? 'Đang kiểm tra...' : (authMode === 'login' ? 'Đăng nhập' : 'Gửi yêu cầu đăng ký')}
-                            </button>
+                            {authMsg.m && <div className={`p-2 text-xs border ${authMsg.t==='error'?'bg-red-50 text-red-600 border-red-200':'bg-blue-50 text-blue-600 border-blue-200'}`}>{authMsg.m}</div>}
+                            <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 font-bold hover:bg-blue-700 disabled:bg-gray-400 shadow-md uppercase">{loading ? 'Đang xác thực...' : (authMode==='login'?'Đăng nhập':'Gửi yêu cầu đăng ký')}</button>
                         </form>
                         <div className="mt-8 text-center text-[12px] text-gray-500 border-t pt-4">
-                            <p className="font-bold text-blue-800">Liên hệ Admin Đức Dương</p>
-                            <p className="text-red-600 font-bold">Zalo: 0332.696.777</p>
+                            <p className="font-bold text-blue-800">Liên hệ Admin Đức Dương - Zalo: 0332.696.777</p>
                         </div>
                     </div>
                 </div>
@@ -192,57 +147,50 @@
 
             return (
                 <div className="min-h-screen flex items-center justify-center p-4">
-                    <div className="bg-[#f0f0f0] win-border w-full max-w-[1000px] h-[90vh] flex flex-col">
+                    <div className="bg-[#f0f0f0] border border-[#888] shadow-2xl w-full max-w-[1050px] h-[90vh] flex flex-col overflow-hidden">
                         <div className="bg-white p-2 border-b flex justify-between items-center text-[12px]">
-                            <span className="font-bold text-gray-700 italic">Dịch vụ Microsoft Azure Text-to-Speech (Edge)</span>
-                            <div className="flex items-center gap-4">
-                                <span className="text-blue-700 font-bold uppercase tracking-tight">User: {user.name}</span>
-                                <button onClick={() => setIsAuthenticated(false)} className="bg-gray-200 border px-3 py-1 hover:bg-red-100 rounded">Đăng xuất</button>
+                            <span className="font-bold text-gray-600">Dịch vụ online chuyển văn bản thành âm thanh. Nền tảng: Microsoft Azure (Edge TTS).</span>
+                            <button onClick={() => setIsAuthenticated(false)} className="win-btn px-3 py-1 font-bold">Thoát</button>
+                        </div>
+                        <div className="flex-1 p-3 flex flex-col gap-3 overflow-hidden">
+                            <div className="flex bg-[#ddd] border-b">
+                                <button onClick={()=>setActiveTab('text')} className={`px-5 py-1.5 border-r border-[#999] ${activeTab==='text'?'bg-white font-bold':'hover:bg-[#eee]'}`}>Văn bản</button>
+                                <button onClick={()=>setActiveTab('files')} className={`px-5 py-1.5 border-r border-[#999] ${activeTab==='files'?'bg-white font-bold':'hover:bg-[#eee]'}`}>Tập tin chữ</button>
                             </div>
-                        </div>
-                        <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
-                           <textarea className="flex-1 p-3 border outline-none resize-none shadow-inner" placeholder="Nhập văn bản..." value={text} onChange={e => setText(e.target.value)} />
-                           <div className="bg-white p-4 border rounded space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <label className="font-bold text-gray-600">Ngôn ngữ:</label>
-                                        <select className="w-full border p-1" value={config.lang} onChange={e => setConfig({...config, lang: e.target.value, voice: voices[e.target.value][0].id})}>
-                                            {Object.keys(voices).map(l => <option key={l} value={l}>{l}</option>)}
-                                        </select>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="font-bold text-gray-600">Giọng nói:</label>
-                                        <select className="w-full border p-1" value={config.voice} onChange={e => setConfig({...config, voice: e.target.value})}>
-                                            {voices[config.lang]?.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                                        </select>
-                                    </div>
+                            <div className="flex-1 bg-white win-input overflow-hidden flex flex-col">
+                                {activeTab==='text' ? <textarea className="flex-1 p-3 outline-none resize-none" value={text} onChange={e=>setText(e.target.value)} placeholder="Nhập nội dung vào đây..."/> : 
+                                <div className="flex-1 p-3 bg-[#f9f9f9] flex flex-col gap-2 overflow-hidden">
+                                    <div className="flex justify-between border-b pb-2"><span>File đã chọn: {files.length}</span><div className="flex gap-2"><label className="win-btn px-3 cursor-pointer">Thêm file .txt<input type="file" multiple accept=".txt" className="hidden" onChange={e=>setFiles([...files,...Array.from(e.target.files)])}/></label><button onClick={()=>setFiles([])} className="win-btn px-3">Xóa hết</button></div></div>
+                                    <div className="flex-1 overflow-y-auto">{files.map((f,i)=><div key={i} className="py-1 border-b text-blue-700 truncate">{f.name}</div>)}</div>
+                                </div>}
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <span>Tập tin âm thanh:</span><input className="flex-1 win-input p-1" value={outputName} onChange={e=>setOutputName(e.target.value)} placeholder="Tên file..."/>
+                                <button className="win-btn px-3 py-1 font-bold" onClick={async ()=>{try{setDirHandle(await window.showDirectoryPicker({mode:'readwrite'}));}catch(e){}}}>{dirHandle?`📁 ${dirHandle.name}`:'📁 Chọn vị trí lưu'}</button>
+                            </div>
+                            <fieldset className="border border-[#aaa] p-3 pt-5 relative mt-1">
+                                <legend className="absolute -top-3 left-3 bg-[#f0f0f0] px-1 text-gray-500 font-bold">Microsoft Azure / Edge TTS</legend>
+                                <div className="grid grid-cols-12 gap-y-3 gap-x-4 items-center">
+                                    <div className="col-span-2">Ngôn ngữ:</div>
+                                    <select className="col-span-4 win-input p-1" value={config.lang} onChange={e=>setConfig({...config,lang:e.target.value,voice:voices[e.target.value][0].id})}>{Object.keys(voices).map(l=><option key={l} value={l}>{l}</option>)}</select>
+                                    <div className="col-span-2 text-right">Giọng nói:</div>
+                                    <select className="col-span-4 win-input p-1" value={config.voice} onChange={e=>setConfig({...config,voice:e.target.value})}>{voices[config.lang]?.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</select>
+                                    <div className="col-span-2">Tốc độ:</div><input type="number" step="0.1" className="col-span-2 win-input p-1 text-right" value={config.rate} onChange={e=>setConfig({...config,rate:parseFloat(e.target.value)})}/>
+                                    <div className="col-span-3 text-right">Cao độ (Hz):</div><input type="number" className="col-span-1 win-input p-1 text-right" value={config.pitch} onChange={e=>setConfig({...config,pitch:parseInt(e.target.value)})}/>
+                                    <div className="col-span-2 text-right">Âm lượng:</div><input type="number" className="col-span-1 win-input p-1 text-right" value={config.vol} onChange={e=>setConfig({...config,vol:parseInt(e.target.value)})}/>
+                                    <button className="col-span-1 win-btn text-[11px]" onClick={()=>setConfig({...config,rate:1,pitch:0,vol:100})}>Mặc định</button>
                                 </div>
-                                <div className="flex items-center gap-4 text-xs">
-                                    <span>Tốc độ: <input type="number" step="0.1" className="border w-16 px-1" value={config.rate} onChange={e => setConfig({...config, rate: parseFloat(e.target.value)})} /></span>
-                                    <span>Âm lượng: <input type="number" className="border w-16 px-1" value={config.vol} onChange={e => setConfig({...config, vol: parseInt(e.target.value)})} /></span>
-                                    <label className="flex items-center gap-1 cursor-pointer ml-auto"><input type="checkbox" checked={config.srt} onChange={e => setConfig({...config, srt: e.target.checked})} /> Xuất SRT</label>
-                                </div>
-                           </div>
+                            </fieldset>
                         </div>
-                        <div className="bg-gray-100 p-3 border-t flex items-center justify-between">
-                            <span className="text-gray-500 font-mono text-[11px]">{status}</span>
-                            <button onClick={async () => {
-                                if (isProcessing) return; setIsProcessing(true); setStatus('Đang tổng hợp...');
-                                try {
-                                    const { blob } = await synthesize(text);
-                                    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Audio_${Date.now()}.mp3`; a.click();
-                                    setStatus('Thành công!');
-                                } catch (e) { setStatus(`Lỗi: ${e.message}`); }
-                                finally { setIsProcessing(false); }
-                            }} className="bg-blue-600 text-white px-8 py-2 font-bold hover:bg-blue-700 shadow rounded">
-                                {isProcessing ? 'ĐANG CHẠY...' : 'TẠO VÀ LƯU NGAY'}
-                            </button>
+                        <div className="bg-[#ddd] p-2 flex items-center gap-4 border-t border-[#999]">
+                            <div className="w-52 truncate font-mono text-[10px] text-gray-600">{status}</div>
+                            <div className="flex-1 bg-white border border-[#888] h-5 relative overflow-hidden"><div className="bg-green-600 h-full transition-all" style={{width:`${progress}%`}}/><div className="absolute inset-0 flex items-center justify-center font-bold text-[10px]">{progress}%</div></div>
+                            <button onClick={processAll} disabled={isProcessing||(activeTab==='text'&&!text.trim())||(activeTab==='files'&&files.length===0)} className="bg-blue-600 text-white px-10 py-2 font-bold hover:bg-blue-700 shadow-md">TẠO VÀ LƯU NGAY</button>
                         </div>
                     </div>
                 </div>
             );
         }
-
         ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
