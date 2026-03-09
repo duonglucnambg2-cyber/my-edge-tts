@@ -17,7 +17,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        // LƯU Ý: Phải là link kết thúc bằng /exec
+        // LƯU Ý: Phải là link kết thúc bằng /exec từ Google Apps Script
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwQPLxLHHZ_Y8DA2T2HwOWHhu4V1kxLJDBKA5A90gk7ux6BPCeglrnVpck6I_GqjXa99w/exec";
 
         const { useState, useEffect, useRef } = React;
@@ -37,6 +37,7 @@
             const [authMode, setAuthMode] = useState('login');
             const [user, setUser] = useState({ name: '', role: '' });
             const [authForm, setAuthForm] = useState({ username: '', password: '' });
+            const [showPassword, setShowPassword] = useState(false);
             const [authStatus, setAuthStatus] = useState({ msg: '', type: '' });
             const [loading, setLoading] = useState(false);
 
@@ -144,15 +145,41 @@
                         <form onSubmit={handleAuth} className="space-y-4">
                             <div>
                                 <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Tài khoản:</label>
-                                <input type="text" className="w-full border p-2 outline-none focus:border-blue-500 rounded" value={authForm.username} onChange={e => setAuthForm({...authForm, username: e.target.value})} />
+                                <input 
+                                    type="text" 
+                                    className="w-full border p-2 outline-none focus:border-blue-500 rounded" 
+                                    value={authForm.username} 
+                                    onChange={e => setAuthForm({...authForm, username: e.target.value})} 
+                                    placeholder="Nhập tài khoản"
+                                />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Mật khẩu:</label>
-                                <input type="password" className="w-full border p-2 outline-none focus:border-blue-500 rounded" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                                <div className="relative">
+                                    <input 
+                                        type={showPassword ? "text" : "password"} 
+                                        className="w-full border p-2 outline-none focus:border-blue-500 rounded pr-12" 
+                                        value={authForm.password} 
+                                        onChange={e => setAuthForm({...authForm, password: e.target.value})} 
+                                        placeholder="Nhập mật khẩu"
+                                    />
+                                    <button 
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute right-2 top-2 text-[11px] font-bold text-blue-600 hover:text-blue-800"
+                                    >
+                                        {showPassword ? "ẨN" : "XEM"}
+                                    </button>
+                                </div>
                             </div>
-                            {authStatus.msg && <div className={`p-3 text-xs border rounded ${authStatus.type === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>{authStatus.msg}</div>}
-                            <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 font-bold hover:bg-blue-700 disabled:bg-gray-400 rounded shadow-md transition-all">
-                                {loading ? 'Đang kiểm tra...' : (authMode === 'login' ? 'ĐĂNG NHẬP' : 'GỬI YÊU CẦU ĐĂNG KÝ')}
+                            {authStatus.msg && (
+                                <div className={`p-3 text-xs border rounded flex flex-col gap-1 ${authStatus.type === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
+                                    <span className="font-bold uppercase">{authStatus.type === 'error' ? 'Lỗi:' : 'Thông báo:'}</span>
+                                    <span>{authStatus.msg}</span>
+                                </div>
+                            )}
+                            <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 font-bold hover:bg-blue-700 disabled:bg-gray-400 rounded shadow-md transition-all uppercase tracking-wider">
+                                {loading ? 'Đang kiểm tra...' : (authMode === 'login' ? 'Đăng nhập' : 'Gửi yêu cầu đăng ký')}
                             </button>
                         </form>
                         <div className="mt-8 text-center text-[12px] text-gray-500 border-t pt-4">
@@ -173,7 +200,6 @@
                                 <button onClick={() => setIsAuthenticated(false)} className="bg-gray-200 border px-3 py-1 hover:bg-red-100 rounded">Đăng xuất</button>
                             </div>
                         </div>
-                        {/* UI Main app goes here (similar to previous version but with stable synth) */}
                         <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                            <textarea className="flex-1 p-3 border outline-none resize-none shadow-inner" placeholder="Nhập văn bản..." value={text} onChange={e => setText(e.target.value)} />
                            <div className="bg-white p-4 border rounded space-y-4">
