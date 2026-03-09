@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edge TTS Studio Online</title>
+    <!-- Tải Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tải thư viện React -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-[#f0f0f0]">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ==========================================
+        // LINK GOOGLE APPS SCRIPT CỦA BẠN
+        // ==========================================
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyvzxhdusrqnYb7fjTQQwOAhytR7u6sr0ui-89UcAMG-PPcPqXz1W9U60_3QmpHQ-Flhw/exec";
+
+        const { useState, useEffect, useRef } = React;
+
+        function generateUUID() {
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                return crypto.randomUUID().replace(/-/g, '');
+            }
+            return 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        const countWords = (str) => str.trim().split(/\s+/).filter(word => word.length > 0).length;
+
+        const chunkText = (text, maxWords) => {
+            const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+            const chunks = [];
+            let currentChunk = '';
+            let currentWordCount = 0;
+
+            for (const sentence of sentences) {
+                const sentenceWordCount = countWords(sentence);
+                if (currentWordCount + sentenceWordCount > maxWords && currentWordCount > 0) {
+                    chunks.push(currentChunk.trim());
+                    currentChunk = sentence;
+                    currentWordCount = sentenceWordCount;
+                } else {
+                    currentChunk += ' ' + sentence;
+                    currentWordCount += sentenceWordCount;
+                }
+            }
+            if (currentChunk.trim()) chunks.push(currentChunk.trim());
+            return chunks.length > 0 ? chunks : [text];
+        };
+
+        const formatSrtTime = (ms) => {
+            const hours = Math.floor(ms / 3600000);
+            const mins = Math.floor((ms % 3600000) / 60000);
+            const secs = Math.floor((ms % 60000) / 1000);
+            const millis = Math.floor(ms % 1000);
+            return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
+        };
+
+        const generateSRT = (boundaries) => {
+            let srtLines = [];
+            let currentLine = [];
+            for (let i = 0; i < boundaries.length; i++) {
+                const word = boundaries[i];
+                currentLine.push(word);
+                if (currentLine.length >= 8 || /[.,?!;:]/.test(word.text) || i === boundaries.length - 1) {
+                    srtLines.push([...currentLine]);
+                    currentLine = [];
+                }
+            }
+            let srtContent = "";
+            srtLines.forEach((line, idx) => {
+                if (line.length === 0) return;
+                const startMs = Math.floor(line[0].offset);
+                const endMs = Math.floor(line[line.length - 1].offset + line[line.length - 1].duration);
+                const text = line.map(w => w.text).join(' ');
+                srtContent += `${idx + 1}\n${formatSrtTime(startMs)} --> ${formatSrtTime(endMs)}\n${text}\n\n`;
+            });
+            return srtContent;
+        };
+
+        const FALLBACK_VOICES = {
+            "Tiếng Việt (Việt Nam)": [
+                { id: 'vi-VN-HoaiMyNeural', name: 'Hoài My (Nữ)' },
+                { id: 'vi-VN-NamMinhNeural', name: 'Nam Minh (Nam)' },
+            ]
+        };
+
+        function App() {
+            const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [authMode, setAuthMode] = useState('login');
+            const [authUsername, setAuthUsername] = useState('');
+            const [authPassword, setAuthPassword] = useState('');
+            const [authLoading, setAuthLoading] = useState(false);
+            const [authMessage, setAuthMessage] = useState('');
+            const [authMsgType, setAuthMsgType] = useState('');
+
+            const [activeTab, setActiveTab] = useState('text');
+            const [text, setText] = useState('');
+            const [files, setFiles] = useState([]);
+            
+            const [outputFileName, setOutputFileName] = useState('');
+            const [dirHandle, setDirHandle] = useState(null);
+            
+            const [voiceData, setVoiceData] = useState(FALLBACK_VOICES);
+            const [language, setLanguage] = useState('Tiếng Việt (Việt Nam)');
+            const [voice, setVoice] = useState('vi-VN-HoaiMyNeural');
+            
+            const [rate, setRate] = useState(1.0);
+            const [pitch, setPitch] = useState(0); 
+            const [volume, setVolume] = useState(100); 
+            const [wordsPerChunk, setWordsPerChunk] = useState(450);
+            const [exportSrt, setExportSrt] = useState(true);
+
+            const [status, setStatus] = useState('Sẵn sàng.');
+            const [progress, setProgress] = useState(0);
+            const [isProcessing, setIsProcessing] = useState(false);
+
+            useEffect(() => {
+                if (!isAuthenticated) return;
+                const fetchVoices = async () => {
+                    setStatus('Đang lấy danh sách giọng đọc từ máy chủ Azure...');
+                    try {
+                        const res = await fetch('https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4');
+                        const data = await res.json();
+                        const grouped = {};
+                        data.forEach(v => {
+                            const locale = v.Locale;
+                            if (!grouped[locale]) grouped[locale] = [];
+                            grouped[locale].push({ id: v.ShortName, name: v.FriendlyName || v.ShortName });
+                        });
+                        const formattedData = {};
+                        Object.keys(grouped).sort().forEach(locale => {
+                            let langName = locale;
+                            try {
+                                const displayName = new Intl.DisplayNames(['vi'], { type: 'language' }).of(locale);
+                                langName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+                            } catch(e) {}
+                            formattedData[langName] = grouped[locale];
+                        });
+                        setVoiceData(formattedData);
+                        const viKey = Object.keys(formattedData).find(k => k.toLowerCase().includes('việt') || k === 'vi-VN');
+                        if (viKey) {
+                            setLanguage(viKey); setVoice(formattedData[viKey][0].id);
+                        } else {
+                            const firstKey = Object.keys(formattedData)[0];
+                            setLanguage(firstKey); setVoice(formattedData[firstKey][0].id);
+                        }
+                        setStatus('Sẵn sàng. Đã tải toàn bộ giọng đọc từ hệ thống.');
+                    } catch (e) {
+                        setStatus('Sẵn sàng. (Đang dùng danh sách giọng dự phòng)');
+                    }
+                };
+                fetchVoices();
+            }, [isAuthenticated]);
+
+            useEffect(() => {
+                if (voiceData[language]) setVoice(voiceData[language][0].id);
+            }, [language, voiceData]);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                if (GOOGLE_SCRIPT_URL.includes("docs.google.com")) {
+                    setAuthMsgType("error");
+                    setAuthMessage("LỖI: Bạn đang dùng link Trang tính. Hãy dùng link Web App (script.google.com)!");
+                    return;
+                }
+
+                setAuthLoading(true);
+                setAuthMessage("Đang kết nối máy chủ...");
+                setAuthMsgType("info");
+
+                try {
+                    const url = `${GOOGLE_SCRIPT_URL}?action=${authMode}&username=${encodeURIComponent(authUsername)}&password=${encodeURIComponent(authPassword)}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+
+                    if (data.success) {
+                        if (authMode === 'login') {
+                            setIsAuthenticated(true);
+                            setStatus(`Sẵn sàng. Chào mừng ${authUsername}!`);
+                        } else {
+                            setAuthMsgType("success");
+                            setAuthMessage(data.message);
+                            setAuthMode('login');
+                        }
+                    } else {
+                        setAuthMsgType("error");
+                        setAuthMessage(data.message);
+                    }
+                } catch (err) {
+                    setAuthMsgType("error");
+                    setAuthMessage("Lỗi kết nối máy chủ. Hãy kiểm tra lại Triển khai (Deploy)!");
+                } finally {
+                    setAuthLoading(false);
+                }
+            };
+
+            const currentWordCount = countWords(text);
+
+            const handleSelectDir = async () => {
+                try {
+                    if ('showDirectoryPicker' in window) {
+                        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                        setDirHandle(handle);
+                    } else {
+                        alert("Trình duyệt không hỗ trợ chọn thư mục. File sẽ tải về Downloads.");
+                    }
+                } catch (err) {}
+            };
+
+            const saveFileToDisk = async (blob, filename) => {
+                if (dirHandle) {
+                    try {
+                        const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        return;
+                    } catch (err) {}
+                }
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const synthesizeChunk = (textChunk) => {
+                return new Promise((resolve, reject) => {
+                    try {
+                        const connId = generateUUID();
+                        const wsUrl = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&ConnectionId=${connId}&Sec-MS-GEC-Version=1-130.0.2849.68`;
+                        const ws = new WebSocket(wsUrl);
+                        let audioChunks = [];
+                        let wordBoundaries = []; 
+                        const requestId = generateUUID();
+
+                        const timeoutId = setTimeout(() => { ws.close(); reject(new Error("Timeout máy chủ Azure.")); }, 30000);
+                        let hasError = false;
+
+                        ws.onopen = () => {
+                            const timestamp = new Date().toString();
+                            const config = `X-Timestamp:${timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"true","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`;
+                            ws.send(config);
+                            const ratePercent = Math.round((rate - 1) * 100);
+                            const rateString = ratePercent >= 0 ? `+${ratePercent}%` : `${ratePercent}%`;
+                            const pitchString = pitch >= 0 ? `+${pitch}Hz` : `${pitch}Hz`;
+                            const volumePercent = volume - 100;
+                            const volumeString = volumePercent >= 0 ? `+${volumePercent}%` : `${volumePercent}%`;
+                            const safeText = textChunk.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            const locale = voice.split('-').slice(0, 2).join('-'); 
+                            const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'><voice name='${voice}'><prosody pitch='${pitchString}' rate='${rateString}' volume='${volumeString}'>${safeText}</prosody></voice></speak>`;
+                            const ssmlMessage = `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${timestamp}\r\nPath:ssml\r\n\r\n${ssml}`;
+                            ws.send(ssmlMessage);
+                        };
+
+                        ws.onmessage = async (event) => {
+                            if (typeof event.data === 'string') {
+                                if (event.data.includes("Path:audio.metadata")) {
+                                    const lines = event.data.split('\r\n');
+                                    const jsonStr = lines[lines.length - 1];
+                                    try {
+                                        const meta = JSON.parse(jsonStr);
+                                        if (meta.Metadata) {
+                                            meta.Metadata.forEach(m => {
+                                                if (m.Type === 'WordBoundary') {
+                                                    wordBoundaries.push({ text: m.Data.text.Text, offset: m.Data.Offset / 10000, duration: m.Data.Duration / 10000 });
+                                                }
+                                            });
+                                        }
+                                    } catch(e) {}
+                                }
+                                if (event.data.includes("Path:turn.end")) {
+                                    clearTimeout(timeoutId);
+                                    ws.close();
+                                    resolve({ blob: new Blob(audioChunks, { type: 'audio/mp3' }), boundaries: wordBoundaries });
+                                }
+                            } else if (event.data instanceof Blob) {
+                                const buffer = await event.data.arrayBuffer();
+                                const view = new DataView(buffer);
+                                const headerLength = view.getUint16(0);
+                                const audioData = buffer.slice(2 + headerLength);
+                                audioChunks.push(audioData);
+                            }
+                        };
+                        ws.onerror = () => { hasError = true; clearTimeout(timeoutId); reject(new Error("Lỗi mạng/WebSocket.")); };
+                        ws.onclose = (event) => { if (!hasError && event.code !== 1000 && event.code !== 1005) { clearTimeout(timeoutId); reject(new Error(`Máy chủ ngắt kết nối.`)); } };
+                    } catch (err) { reject(err); }
+                });
+            };
+
+            const synthesizeWithRetry = async (textChunk, retries = 3) => {
+                for (let i = 0; i < retries; i++) {
+                    try { return await synthesizeChunk(textChunk); } catch (err) {
+                        if (i === retries - 1) throw err;
+                        setStatus(`Lỗi mạng. Đang thử lại (${i+1}/${retries})...`);
+                        await new Promise(r => setTimeout(r, 1500));
+                    }
+                }
+            };
+
+            const handleProcessText = async () => {
+                if (!text.trim()) { setStatus("Lỗi: Văn bản trống!"); return; }
+                setIsProcessing(true); setProgress(0); setStatus("Đang xử lý...");
+                try {
+                    const chunks = chunkText(text, wordsPerChunk);
+                    const audioBlobs = [];
+                    let allBoundaries = [];
+                    let currentGlobalOffset = 0;
+                    
+                    for (let i = 0; i < chunks.length; i++) {
+                        setStatus(`Đang tổng hợp đoạn ${i + 1}/${chunks.length}...`);
+                        const { blob, boundaries } = await synthesizeWithRetry(chunks[i]);
+                        audioBlobs.push(blob);
+                        let chunkMaxTime = 0;
+                        boundaries.forEach(b => {
+                            allBoundaries.push({ ...b, offset: b.offset + currentGlobalOffset });
+                            const wordEndTime = b.offset + b.duration;
+                            if (wordEndTime > chunkMaxTime) chunkMaxTime = wordEndTime;
+                        });
+                        currentGlobalOffset += chunkMaxTime + 200;
+                        setProgress(Math.round(((i + 1) / chunks.length) * 100));
+                    }
+
+                    const finalBlob = new Blob(audioBlobs, { type: 'audio/mp3' });
+                    const baseName = outputFileName || `Voice_${Date.now()}`;
+                    await saveFileToDisk(finalBlob, `${baseName}.mp3`);
+                    if (exportSrt) {
+                        const srtStr = generateSRT(allBoundaries);
+                        await saveFileToDisk(new Blob([srtStr], { type: 'text/plain' }), `${baseName}.srt`);
+                    }
+                    setStatus("Sẵn sàng. Hoàn tất!");
+                } catch (err) { setStatus(`Lỗi: ${err.message}`); } finally { setIsProcessing(false); }
+            };
+
+            const handleProcessFiles = async () => {
+                if (files.length === 0) return setStatus("Lỗi: Chưa chọn file!");
+                setIsProcessing(true); setProgress(0);
+                try {
+                    for (let f = 0; f < files.length; f++) {
+                        const file = files[f];
+                        setStatus(`File: ${file.name} (${f + 1}/${files.length})...`);
+                        const fileText = await file.text();
+                        if (!fileText.trim()) continue;
+                        const chunks = chunkText(fileText, wordsPerChunk);
+                        const audioBlobs = [];
+                        let allBoundaries = [];
+                        let currentGlobalOffset = 0;
+                        for (let i = 0; i < chunks.length; i++) {
+                            const { blob, boundaries } = await synthesizeWithRetry(chunks[i]);
+                            audioBlobs.push(blob);
+                            let chunkMaxTime = 0;
+                            boundaries.forEach(b => {
+                                allBoundaries.push({ ...b, offset: b.offset + currentGlobalOffset });
+                                const wordEndTime = b.offset + b.duration;
+                                if (wordEndTime > chunkMaxTime) chunkMaxTime = wordEndTime;
+                            });
+                            currentGlobalOffset += chunkMaxTime + 200;
+                            setProgress(Math.round(((f + (i + 1) / chunks.length) / files.length) * 100));
+                        }
+                        const baseFileName = outputFileName ? `${outputFileName}_${f+1}` : file.name.replace(/\.[^/.]+$/, "");
+                        await saveFileToDisk(new Blob(audioBlobs, { type: 'audio/mp3' }), `${baseFileName}.mp3`);
+                        if (exportSrt) {
+                            await saveFileToDisk(new Blob([generateSRT(allBoundaries)], { type: 'text/plain' }), `${baseFileName}.srt`);
+                        }
+                    }
+                    setStatus("Hoàn tất tất cả!");
+                    setProgress(100);
+                } catch (err) { setStatus(`Lỗi: ${err.message}`); } finally { setIsProcessing(false); }
+            };
+
+            const handleFileSelect = (e) => {
+                const selectedFiles = Array.from(e.target.files).filter(f => f.type === 'text/plain');
+                setFiles(prev => [...prev, ...selectedFiles]);
+            };
+
+            if (!isAuthenticated) {
+                return (
+                    <div className="min-h-screen bg-[#f0f0f0] flex items-center justify-center p-4 font-sans text-[13px] text-gray-800">
+                        <div className="bg-white border border-gray-300 shadow-xl w-full max-w-[400px] p-6">
+                            <h2 className="text-xl font-bold mb-4 text-center text-blue-700 underline">Edge TTS Studio</h2>
+                            <div className="flex bg-[#e4e4e4] border border-gray-300 mb-4">
+                                <button className={`flex-1 py-1.5 border-r border-gray-300 ${authMode === 'login' ? 'bg-white font-medium border-b-2 border-b-blue-500 mb-[-1px]' : 'hover:bg-gray-100'}`} onClick={() => setAuthMode('login')}>Đăng nhập</button>
+                                <button className={`flex-1 py-1.5 ${authMode === 'register' ? 'bg-white font-medium border-b-2 border-b-blue-500 mb-[-1px]' : 'hover:bg-gray-100'}`} onClick={() => setAuthMode('register')}>Đăng ký</button>
+                            </div>
+                            <form onSubmit={handleAuth} className="flex flex-col gap-3">
+                                <div><label className="block mb-1 font-medium">Tài khoản:</label><input type="text" value={authUsername} onChange={e => setAuthUsername(e.target.value)} className="w-full border border-gray-300 p-2 outline-none focus:border-blue-500" required /></div>
+                                <div><label className="block mb-1 font-medium">Mật khẩu:</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} className="w-full border border-gray-300 p-2 outline-none focus:border-blue-500" required /></div>
+                                {authMessage && <div className={`p-2 border mt-2 ${authMsgType === 'success' ? 'bg-green-50 text-green-700 border-green-200' : (authMsgType === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200')}`}>{authMessage}</div>}
+                                <button type="submit" disabled={authLoading} className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium py-2 mt-2 shadow-sm">{authLoading ? 'Đang xử lý...' : (authMode === 'login' ? 'ĐĂNG NHẬP' : 'GỬI YÊU CẦU ĐĂNG KÝ')}</button>
+                            </form>
+                            <div className="text-center text-xs text-gray-600 mt-4 space-y-1">
+                                <div className="font-semibold text-blue-700 text-sm mt-1">Liên hệ Admin Đức Dương - Zalo: 0332.696.777</div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-[#f0f0f0] p-4 font-sans text-[13px] text-gray-800 flex items-center justify-center">
+                    <div className="bg-[#f0f0f0] border border-gray-300 shadow-xl w-full max-w-[1000px] flex flex-col h-[90vh] max-h-[800px]">
+                        <div className="bg-white px-4 py-2 border-b border-gray-300 flex justify-between items-center">
+                            <h1 className="text-gray-700 font-medium">Edge TTS Studio - <span className="text-blue-600 font-bold">{authUsername}</span></h1>
+                            <button onClick={() => setIsAuthenticated(false)} className="bg-gray-200 hover:bg-red-100 border border-gray-300 px-3 py-1 text-xs">Đăng xuất</button>
+                        </div>
+                        <div className="flex-1 p-3 flex flex-col gap-3 overflow-hidden">
+                            <div className="flex bg-[#e4e4e4] border border-gray-300">
+                                <button className={`px-6 py-1.5 border-r border-gray-300 ${activeTab === 'text' ? 'bg-white font-medium border-b-2 border-b-blue-500 mb-[-1px]' : 'hover:bg-gray-100'}`} onClick={() => setActiveTab('text')}>Văn bản</button>
+                                <button className={`px-6 py-1.5 border-r border-gray-300 ${activeTab === 'files' ? 'bg-white font-medium border-b-2 border-b-blue-500 mb-[-1px]' : 'hover:bg-gray-100'}`} onClick={() => setActiveTab('files')}>Tập tin chữ</button>
+                            </div>
+                            <div className="flex-1 border border-gray-300 bg-white flex flex-col overflow-hidden">
+                                {activeTab === 'text' ? (
+                                    <textarea value={text} onChange={(e) => setText(e.target.value)} className="flex-1 w-full p-2 outline-none resize-none" placeholder="Nhập nội dung..." />
+                                ) : (
+                                    <div className="flex-1 p-3 bg-gray-50 flex flex-col gap-3 overflow-hidden">
+                                        <div className="flex justify-between items-center">
+                                            <span>Files: {files.length}</span>
+                                            <div className="flex gap-2">
+                                                <label className="bg-gray-200 hover:bg-gray-300 border border-gray-400 px-3 py-1 cursor-pointer active:bg-gray-400">Thêm .txt<input type="file" multiple accept=".txt" className="hidden" onChange={handleFileSelect} /></label>
+                                                <button onClick={() => setFiles([])} className="bg-gray-200 border border-gray-400 px-3 py-1 active:bg-gray-400">Xóa hết</button>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 border border-gray-300 bg-white overflow-y-auto p-2">
+                                            {files.length === 0 ? <div className="text-gray-400 italic text-center mt-10">Kéo thả file .txt vào đây để xử lý hàng loạt...</div> : <ul className="list-disc pl-5">{files.map((f, i) => <li key={i} className="py-1 border-b text-blue-800 truncate">{f.name} ({(f.size / 1024).toFixed(1)} KB)</li>)}</ul>}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="whitespace-nowrap">Tên xuất ra:</span>
+                                <input type="text" value={outputFileName} onChange={(e) => setOutputFileName(e.target.value)} placeholder="Tự động nếu để trống..." className="flex-1 border border-gray-300 p-1 px-2" />
+                                <button onClick={handleSelectDir} className="bg-gray-200 hover:bg-gray-300 border border-gray-400 px-3 py-1 text-xs truncate max-w-[200px]">{dirHandle ? `📁 ${dirHandle.name}` : "📁 Chọn thư mục lưu"}</button>
+                            </div>
+                            <fieldset className="border border-gray-300 p-3 relative mt-2">
+                                <legend className="absolute -top-3 left-2 bg-[#f0f0f0] px-1 text-gray-600">Cấu hình Azure</legend>
+                                <div className="grid grid-cols-12 gap-2 items-center">
+                                    <div className="col-span-2">Ngôn ngữ:</div>
+                                    <div className="col-span-4"><select className="w-full border p-1" value={language} onChange={(e) => setLanguage(e.target.value)}>{Object.keys(voiceData).map(lang => <option key={lang} value={lang}>{lang}</option>)}</select></div>
+                                    <div className="col-span-2 text-right pr-2">Giọng:</div>
+                                    <div className="col-span-4"><select className="w-full border p-1" value={voice} onChange={(e) => setVoice(e.target.value)}>{voiceData[language]?.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></div>
+                                    <div className="col-span-2">Tốc độ:</div>
+                                    <div className="col-span-2"><input type="number" step="0.1" className="w-full border p-1 text-right" value={rate} onChange={e => setRate(parseFloat(e.target.value))} /></div>
+                                    <div className="col-span-3 text-right">Cao độ (Hz):</div>
+                                    <div className="col-span-1"><input type="number" className="w-full border p-1 text-right" value={pitch} onChange={e => setPitch(parseInt(e.target.value))} /></div>
+                                    <div className="col-span-2 text-right">Âm lượng:</div>
+                                    <div className="col-span-2 flex gap-1"><input type="number" className="w-full border p-1 text-right" value={volume} onChange={e => setVolume(parseInt(e.target.value))} /><button onClick={() => {setRate(1); setPitch(0); setVolume(100);}} className="bg-gray-200 border border-gray-400 px-2">R</button></div>
+                                    <div className="col-span-2">Cắt từ:</div>
+                                    <div className="col-span-2"><input type="number" className="w-full border p-1 text-right" value={wordsPerChunk} onChange={e => setWordsPerChunk(parseInt(e.target.value))} /></div>
+                                    <div className="col-span-8 flex gap-4 ml-4">
+                                        <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={exportSrt} onChange={(e) => setExportSrt(e.target.checked)} className="accent-blue-600" /> <b>Xuất Phụ đề (.srt)</b></label>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                        <div className="bg-[#e4e4e4] border-t border-gray-300 p-2 flex items-center gap-3">
+                            <div className="w-64 text-gray-700 truncate text-[11px] font-mono" title={status}>{status}</div>
+                            <div className="flex-1 bg-white border border-gray-300 h-5 relative">
+                                <div className="bg-[#06b025] h-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold">{progress}%</div>
+                            </div>
+                            <button onClick={activeTab === 'text' ? handleProcessText : handleProcessFiles} disabled={isProcessing || (activeTab === 'text' && !text.trim()) || (activeTab === 'files' && files.length === 0)} className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white min-w-[150px] border border-blue-800 px-4 py-1.5 font-bold shadow-md">
+                                {isProcessing ? 'ĐANG CHẠY...' : 'TẠO VÀ LƯU NGAY'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
